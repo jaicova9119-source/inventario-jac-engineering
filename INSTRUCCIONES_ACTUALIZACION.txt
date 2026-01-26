@@ -1,0 +1,61 @@
+========================================================
+  INSTRUCCIONES DE ACTUALIZACIÓN DE INVENTARIO
+  JAC Engineering SAS
+========================================================
+
+PASOS PARA ACTUALIZAR DATOS:
+
+1. DESCARGAR DESDE SAP:
+   - Exporta el reporte de inventario desde SAP
+   - El archivo debe contener al menos:
+     * Código de material (MATNR)
+     * Descripción (MAKTX)
+     * Stock actual (LABST)
+   
+2. GUARDAR ARCHIVO:
+   - Guarda el archivo Excel descargado en:
+     C:\Proyectos\inventory-system\data\sap_descargas\
+   
+   - Puedes usar cualquier nombre para el archivo
+   - El sistema usa automáticamente el más reciente
+
+3. ACTUALIZAR EN LA APP:
+   - Abre la aplicación de inventario
+   - Click en "🔄 Actualizar Datos" en el sidebar
+   - El sistema lee automáticamente el archivo nuevo
+
+4. VERIFICAR:
+   - Los datos se actualizan automáticamente
+   - Revisa los indicadores para confirmar
+
+========================================================
+
+COLUMNAS RECONOCIDAS AUTOMÁTICAMENTE:
+
+El sistema detecta estas columnas (no importa el nombre exacto):
+
+✓ Código: MATNR, Material, Codigo, Code
+✓ Descripción: MAKTX, Descripcion, Description
+✓ Unidad: MEINS, Unidad, Unit, UOM
+✓ Stock: LABST, Stock, Inventario, Quantity
+✓ Almacén: LGORT, Almacen, Storage
+✓ Centro: WERKS, Centro, Plant
+✓ Precio: PRECIO, Price, Valor, Cost
+✓ Fecha: FECHA, Date, Update
+
+========================================================
+
+CONFIGURACIÓN DE PARÁMETROS:
+
+Para configurar stock mínimo/máximo por material:
+
+Edita: C:\Proyectos\inventory-system\config\parametros_stock.xlsx
+
+Columnas requeridas:
+- Codigo (debe coincidir con código SAP)
+- Stock_Minimo
+- Stock_Maximo
+- Criticidad (A/B/C)
+- Proveedor
+
+========================================================

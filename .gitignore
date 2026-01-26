@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+# No subir archivos temporales
+data/sap_descargas/*.xlsx
+*.bat
+ngrok.exe
+
+# Mantener estructura de carpetas vacías
+!data/sap_descargas/.gitkeep
+!data/raw/.gitkeep
