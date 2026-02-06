@@ -1,18 +1,69 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# CRITICO: Credenciales de Google (NO SUBIR A GITHUB)
+config/google_credentials.json
+
+# Archivos de datos locales (NO SUBIR)
+data/raw/*.xlsx
+data/raw/*.xls
+data/sap_descargas/*.xlsx
+data/sap_descargas/*.xls
+
+# Archivos Excel de configuracion local
+config/*.xlsx
+
+# Logs
 *.log
-.DS_Store
+
+# IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
-# No subir archivos temporales
-data/sap_descargas/*.xlsx
-*.bat
-ngrok.exe
+# OS
+.DS_Store
+Thumbs.db
 
-# Mantener estructura de carpetas vacías
-!data/sap_descargas/.gitkeep
-!data/raw/.gitkeep
+# Temporal
+tmp/
+temp/
+
+# Scripts de migracion local
+migrar_*.py
+exportar_*.py
+crear_*.py
+limpiar_*.py
+diagnostico_*.py
+verificar_*.py
+actualizar_*.py
+convertir_*.py
+agregar_*.py

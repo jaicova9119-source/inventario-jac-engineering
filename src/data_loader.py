@@ -1,8 +1,3 @@
-"""
-Módulo de carga y limpieza de datos SAP
-JAC Engineering SAS - Adaptado para columnas en español
-"""
-
 import pandas as pd
 import os
 from datetime import datetime
@@ -27,7 +22,6 @@ class DataLoader:
         os.makedirs(self.sap_downloads_dir, exist_ok=True)
     
     def get_latest_sap_file(self):
-        """Busca el archivo Excel más reciente"""
         try:
             excel_files = glob.glob(os.path.join(self.sap_downloads_dir, '*.xlsx'))
             excel_files.extend(glob.glob(os.path.join(self.sap_downloads_dir, '*.xls')))
@@ -48,7 +42,6 @@ class DataLoader:
             return None
     
     def load_sap_data(self):
-        """Carga datos desde archivo SAP"""
         try:
             latest_file = self.get_latest_sap_file()
             
@@ -62,15 +55,14 @@ class DataLoader:
                 file_to_read = latest_file
             
             df = pd.read_excel(file_to_read)
-            print("Archivo leído: " + str(len(df)) + " filas")
+            print("Archivo leido: " + str(len(df)) + " filas")
             
-            # Mapeo de columnas en español
             column_mapping = {
                 'Codigo material': 'codigo',
                 'Texto breve de material': 'descripcion',
                 'Centro': 'centro',
                 'Nombre centro de costo': 'centro_nombre',
-                'Ubicacion': 'almacen',
+                'Ubicacion': 'ubicacion',
                 'Cantidad': 'stock_actual',
                 'Unidad de medida': 'unidad',
                 'Valor por unidad': 'precio_unitario',
@@ -79,20 +71,16 @@ class DataLoader:
             
             df.rename(columns=column_mapping, inplace=True)
             
-            # Verificar columnas esenciales
             if 'codigo' not in df.columns:
-                print("ERROR: No se encontró columna de código")
+                print("ERROR: No se encontro columna de codigo")
                 return pd.DataFrame()
             
-            # Limpieza de datos
             df['stock_actual'] = pd.to_numeric(df['stock_actual'], errors='coerce').fillna(0)
             df['precio_unitario'] = pd.to_numeric(df['precio_unitario'], errors='coerce').fillna(0)
             
-            # Calcular valor de stock si no existe
             if 'valor_stock' not in df.columns:
                 df['valor_stock'] = df['stock_actual'] * df['precio_unitario']
             
-            # Agregar columnas faltantes
             if 'unidad' not in df.columns:
                 df['unidad'] = 'UND'
             if 'almacen' not in df.columns:
@@ -100,9 +88,10 @@ class DataLoader:
             if 'fecha_actualizacion' not in df.columns:
                 df['fecha_actualizacion'] = datetime.now().strftime('%Y-%m-%d')
             
-            # Limpiar valores nulos
             df = df[df['codigo'].notna()]
             df['descripcion'] = df['descripcion'].fillna('SIN DESCRIPCION')
+            
+            df['codigo'] = df['codigo'].astype(float).astype(int).astype(str)
             
             print("Datos procesados: " + str(len(df)) + " registros")
             return df
@@ -114,67 +103,160 @@ class DataLoader:
             return pd.DataFrame()
     
     def load_parameters(self):
-        """Carga parámetros de control"""
         try:
-            if not os.path.exists(self.params_file_path):
-                print("ERROR: No existe parametros_stock.xlsx")
-                return pd.DataFrame()
+            params_file_centro = os.path.join(
+                os.path.dirname(self.params_file_path), 
+                'parametros_stock_por_centro.xlsx'
+            )
             
-            df = pd.read_excel(self.params_file_path)
-            
-            column_mapping = {
-                'Codigo': 'codigo',
-                'Descripcion': 'descripcion',
-                'Stock_Minimo': 'stock_minimo',
-                'Stock_Maximo': 'stock_maximo',
-                'Lead_Time_dias': 'lead_time',
-                'Criticidad': 'criticidad',
-                'Consumo_Prom_Mensual': 'consumo_mensual',
-                'Proveedor': 'proveedor'
-            }
-            
-            df.rename(columns=column_mapping, inplace=True)
+            if os.path.exists(params_file_centro):
+                print("Usando parametros por centro")
+                print("Archivo: " + params_file_centro)
+                df = pd.read_excel(params_file_centro)
+                
+                column_mapping = {
+                    'Codigo': 'codigo',
+                    'Centro': 'centro',
+                    'Descripcion': 'descripcion',
+                    'Nombre_Tecnico': 'nombre_tecnico',
+                    'Centro_Nombre': 'centro_nombre_param',
+                    'Stock_Minimo': 'stock_minimo',
+                    'Stock_Maximo': 'stock_maximo',
+                    'Lead_Time_dias': 'lead_time',
+                    'Criticidad': 'criticidad',
+                    'Consumo_Prom_Mensual': 'consumo_mensual',
+                    'Proveedor': 'proveedor',
+                    'Categoria': 'Categoria'
+                }
+                
+                df.rename(columns=column_mapping, inplace=True)
+                
+                print("  Registros antes de limpiar: " + str(len(df)))
+                df = df[df['codigo'].notna()]
+                print("  Registros despues de limpiar: " + str(len(df)))
+                
+                df['codigo'] = df['codigo'].astype(float).astype(int).astype(str)
+                
+                print("Parametros cargados (con centro): " + str(len(df)) + " registros")
+                
+            else:
+                print("Usando parametros sin centro")
+                if not os.path.exists(self.params_file_path):
+                    print("ERROR: No existe parametros_stock.xlsx")
+                    return pd.DataFrame()
+                
+                df = pd.read_excel(self.params_file_path)
+                
+                column_mapping = {
+                    'Codigo': 'codigo',
+                    'Descripcion': 'descripcion',
+                    'Nombre_Tecnico': 'nombre_tecnico',
+                    'Stock_Minimo': 'stock_minimo',
+                    'Stock_Maximo': 'stock_maximo',
+                    'Lead_Time_dias': 'lead_time',
+                    'Criticidad': 'criticidad',
+                    'Consumo_Prom_Mensual': 'consumo_mensual',
+                    'Proveedor': 'proveedor',
+                    'Categoria': 'Categoria'
+                }
+                
+                df.rename(columns=column_mapping, inplace=True)
+                
+                df = df[df['codigo'].notna()]
+                df['codigo'] = df['codigo'].astype(float).astype(int).astype(str)
+                
+                print("Parametros cargados (sin centro): " + str(len(df)) + " registros")
             
             df['criticidad'] = df['criticidad'].fillna('C').str.upper()
             df['criticidad'] = df['criticidad'].apply(lambda x: x if x in ['A', 'B', 'C'] else 'C')
             
-            print("Parametros cargados: " + str(len(df)) + " materiales")
+            if 'nombre_tecnico' in df.columns:
+                df['nombre_tecnico'] = df['nombre_tecnico'].fillna('')
+            
             return df
             
         except Exception as e:
             print("ERROR parametros: " + str(e))
+            import traceback
+            traceback.print_exc()
             return pd.DataFrame()
     
     def merge_data(self):
-        """Combina datos SAP con parámetros"""
-        print("\n" + "="*60)
-        print("ACTUALIZANDO INVENTARIO")
-        print("="*60 + "\n")
+        print("\n" + "="*70)
+        print("  ACTUALIZANDO INVENTARIO")
+        print("="*70 + "\n")
         
+        print("[1/4] Cargando datos SAP...")
         sap_data = self.load_sap_data()
-        params = self.load_parameters()
         
         if sap_data.empty:
             print("ERROR: No hay datos SAP")
             return pd.DataFrame()
         
+        print("  SAP cargado: " + str(len(sap_data)) + " registros")
+        print()
+        
+        print("[2/4] Cargando parametros...")
+        params = self.load_parameters()
+        
         if params.empty:
-            print("AVISO: Sin parametros, usando datos SAP")
+            print("  Sin parametros, usando valores por defecto")
             sap_data['stock_minimo'] = 0
             sap_data['stock_maximo'] = 0
             sap_data['lead_time'] = 0
             sap_data['criticidad'] = 'C'
             sap_data['consumo_mensual'] = 0
             sap_data['proveedor'] = 'SIN CONFIGURAR'
+            sap_data['nombre_tecnico'] = ''
             return sap_data
         
-        merged = pd.merge(
-            sap_data,
-            params,
-            on='codigo',
-            how='left',
-            suffixes=('', '_param')
-        )
+        print("  Parametros cargados: " + str(len(params)) + " registros")
+        print()
+        
+        print("[3/4] Realizando merge...")
+        
+        tiene_centro_sap = 'centro' in sap_data.columns
+        tiene_centro_params = 'centro' in params.columns
+        
+        print("  Centro en SAP: " + str(tiene_centro_sap))
+        print("  Centro en Params: " + str(tiene_centro_params))
+        
+        if tiene_centro_params and tiene_centro_sap:
+            print("  Merge por codigo + centro")
+            
+            sap_data['centro'] = sap_data['centro'].astype(str)
+            params['centro'] = params['centro'].astype(str)
+            
+            merged = pd.merge(
+                sap_data,
+                params,
+                on=['codigo', 'centro'],
+                how='left',
+                suffixes=('', '_param')
+            )
+            
+            print("  Merge completado: " + str(len(merged)) + " registros")
+            
+            con_params = merged['stock_minimo'].notna().sum()
+            sin_params = merged['stock_minimo'].isna().sum()
+            
+            print("  Con parametros: " + str(con_params))
+            print("  Sin parametros: " + str(sin_params))
+            
+        else:
+            print("  Merge solo por codigo")
+            merged = pd.merge(
+                sap_data,
+                params,
+                on='codigo',
+                how='left',
+                suffixes=('', '_param')
+            )
+            
+            print("  Merge completado: " + str(len(merged)) + " registros")
+        
+        print()
+        print("[4/4] Limpiando datos...")
         
         merged['descripcion'] = merged['descripcion'].fillna(merged.get('descripcion_param', ''))
         if 'descripcion_param' in merged.columns:
@@ -187,7 +269,14 @@ class DataLoader:
         merged['consumo_mensual'] = merged['consumo_mensual'].fillna(0)
         merged['proveedor'] = merged['proveedor'].fillna('SIN CONFIGURAR')
         
-        print("\nDATOS COMBINADOS: " + str(len(merged)) + " registros")
-        print("="*60 + "\n")
+        if 'nombre_tecnico' in merged.columns:
+            merged['nombre_tecnico'] = merged['nombre_tecnico'].fillna('')
+        else:
+            merged['nombre_tecnico'] = ''
+        
+        print()
+        print("="*70)
+        print("  DATOS COMBINADOS: " + str(len(merged)) + " registros")
+        print("="*70 + "\n")
         
         return merged
