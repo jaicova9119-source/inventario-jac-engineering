@@ -1,6 +1,7 @@
 """
 Manejador de Google Sheets
 JAC Engineering SAS
+VERSION COMPATIBLE CON STREAMLIT CLOUD Y HEROKU
 """
 
 import gspread
@@ -20,16 +21,52 @@ class GoogleSheetsHandler:
         self._authenticate()
     
     def _authenticate(self):
-        """Autentica con Google Sheets"""
+        """Autentica con Google Sheets - Compatible con Streamlit Cloud y Heroku"""
         try:
+            # OPCION 1: Streamlit secrets (Streamlit Cloud)
             if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
+                print("Autenticando con Streamlit secrets...")
                 credentials_dict = dict(st.secrets['gcp_service_account'])
                 credentials = Credentials.from_service_account_info(
                     credentials_dict,
                     scopes=self.scopes
                 )
+            
+            # OPCION 2: Variables de entorno (Heroku)
+            elif os.environ.get('GCP_PROJECT_ID'):
+                print("Autenticando con variables de entorno (Heroku)...")
+                
+                # Construir diccionario de credenciales desde env vars
+                private_key = os.environ.get('GCP_PRIVATE_KEY', '')
+                
+                # Heroku puede escapar los saltos de linea, restaurarlos
+                if '\\n' in private_key:
+                    private_key = private_key.replace('\\n', '\n')
+                
+                credentials_dict = {
+                    'type': os.environ.get('GCP_TYPE', 'service_account'),
+                    'project_id': os.environ.get('GCP_PROJECT_ID'),
+                    'private_key_id': os.environ.get('GCP_PRIVATE_KEY_ID'),
+                    'private_key': private_key,
+                    'client_email': os.environ.get('GCP_CLIENT_EMAIL'),
+                    'client_id': os.environ.get('GCP_CLIENT_ID'),
+                    'auth_uri': os.environ.get('GCP_AUTH_URI', 'https://accounts.google.com/o/oauth2/auth'),
+                    'token_uri': os.environ.get('GCP_TOKEN_URI', 'https://oauth2.googleapis.com/token'),
+                    'auth_provider_x509_cert_url': os.environ.get('GCP_AUTH_PROVIDER_CERT', 'https://www.googleapis.com/oauth2/v1/certs'),
+                    'client_x509_cert_url': os.environ.get('GCP_CLIENT_CERT_URL'),
+                    'universe_domain': os.environ.get('GCP_UNIVERSE_DOMAIN', 'googleapis.com')
+                }
+                
+                credentials = Credentials.from_service_account_info(
+                    credentials_dict,
+                    scopes=self.scopes
+                )
+            
+            # OPCION 3: Archivo local (desarrollo)
             else:
+                print("Autenticando con archivo local...")
                 credentials_file = 'config/google_credentials.json'
+                
                 if not os.path.exists(credentials_file):
                     raise FileNotFoundError("No se encontro google_credentials.json")
                 
@@ -39,9 +76,11 @@ class GoogleSheetsHandler:
                 )
             
             self.client = gspread.authorize(credentials)
+            print("Autenticacion exitosa")
             
         except Exception as e:
             st.error("Error de autenticacion: " + str(e))
+            print("ERROR de autenticacion:", str(e))
             raise
     
     def read_sheet_to_dataframe(self, sheet_id, sheet_name):
@@ -61,6 +100,7 @@ class GoogleSheetsHandler:
             
         except Exception as e:
             st.error("Error leyendo Google Sheet: " + str(e))
+            print("ERROR leyendo sheet:", str(e))
             return pd.DataFrame()
     
     def write_dataframe_to_sheet(self, df, sheet_id, sheet_name):
@@ -78,6 +118,7 @@ class GoogleSheetsHandler:
             
         except Exception as e:
             st.error("Error escribiendo a Google Sheet: " + str(e))
+            print("ERROR escribiendo sheet:", str(e))
             return False
     
     def append_rows_to_sheet(self, df, sheet_id, sheet_name):
@@ -93,4 +134,37 @@ class GoogleSheetsHandler:
             
         except Exception as e:
             st.error("Error agregando filas: " + str(e))
+            print("ERROR agregando filas:", str(e))
+            return False
+    
+    def update_rows_by_condition(self, df, sheet_id, sheet_name, key_column):
+        """Actualiza filas basado en una columna clave"""
+        try:
+            # Leer datos actuales
+            current_df = self.read_sheet_to_dataframe(sheet_id, sheet_name)
+            
+            if current_df.empty:
+                # Si no hay datos, escribir todo
+                return self.write_dataframe_to_sheet(df, sheet_id, sheet_name)
+            
+            # Actualizar o agregar filas
+            for idx, row in df.iterrows():
+                key_value = row[key_column]
+                
+                # Buscar si existe
+                mask = current_df[key_column] == key_value
+                
+                if mask.any():
+                    # Actualizar fila existente
+                    current_df.loc[mask] = row
+                else:
+                    # Agregar nueva fila
+                    current_df = pd.concat([current_df, pd.DataFrame([row])], ignore_index=True)
+            
+            # Escribir todo de vuelta
+            return self.write_dataframe_to_sheet(current_df, sheet_id, sheet_name)
+            
+        except Exception as e:
+            st.error("Error actualizando filas: " + str(e))
+            print("ERROR actualizando filas:", str(e))
             return False
