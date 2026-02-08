@@ -1,7 +1,7 @@
 """
 Manejador de Google Sheets
 JAC Engineering SAS
-VERSION COMPATIBLE CON STREAMLIT CLOUD Y HEROKU
+VERSION COMPATIBLE CON RENDER, STREAMLIT CLOUD Y LOCAL
 """
 
 import gspread
@@ -21,25 +21,16 @@ class GoogleSheetsHandler:
         self._authenticate()
     
     def _authenticate(self):
-        """Autentica con Google Sheets - Compatible con Streamlit Cloud y Heroku"""
+        """Autentica con Google Sheets - Compatible con Render, Streamlit Cloud y Local"""
         try:
-            # OPCION 1: Streamlit secrets (Streamlit Cloud)
-            if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
-                print("Autenticando con Streamlit secrets...")
-                credentials_dict = dict(st.secrets['gcp_service_account'])
-                credentials = Credentials.from_service_account_info(
-                    credentials_dict,
-                    scopes=self.scopes
-                )
-            
-            # OPCION 2: Variables de entorno (Heroku)
-            elif os.environ.get('GCP_PROJECT_ID'):
-                print("Autenticando con variables de entorno (Heroku)...")
+            # OPCION 1: Variables de entorno (Render/Heroku) - VERIFICAR PRIMERO
+            if os.environ.get('GCP_PROJECT_ID'):
+                print("Autenticando con variables de entorno (Render/Heroku)...")
                 
                 # Construir diccionario de credenciales desde env vars
                 private_key = os.environ.get('GCP_PRIVATE_KEY', '')
                 
-                # Heroku puede escapar los saltos de linea, restaurarlos
+                # Render/Heroku pueden escapar los saltos de linea, restaurarlos
                 if '\\n' in private_key:
                     private_key = private_key.replace('\\n', '\n')
                 
@@ -62,13 +53,36 @@ class GoogleSheetsHandler:
                     scopes=self.scopes
                 )
             
+            # OPCION 2: Streamlit secrets (Streamlit Cloud)
+            elif hasattr(st, 'secrets'):
+                try:
+                    # Intentar acceder a secrets sin lanzar excepcion
+                    secrets_dict = st.secrets.to_dict() if hasattr(st.secrets, 'to_dict') else {}
+                    
+                    if 'gcp_service_account' in secrets_dict:
+                        print("Autenticando con Streamlit secrets...")
+                        credentials_dict = dict(st.secrets['gcp_service_account'])
+                        credentials = Credentials.from_service_account_info(
+                            credentials_dict,
+                            scopes=self.scopes
+                        )
+                    else:
+                        raise ValueError("No se encontraron credenciales de GCP en Streamlit secrets")
+                except Exception as e:
+                    print("No se pudieron leer Streamlit secrets:", str(e))
+                    # Intentar con archivo local como fallback
+                    raise
+            
             # OPCION 3: Archivo local (desarrollo)
             else:
                 print("Autenticando con archivo local...")
                 credentials_file = 'config/google_credentials.json'
                 
                 if not os.path.exists(credentials_file):
-                    raise FileNotFoundError("No se encontro google_credentials.json")
+                    raise FileNotFoundError(
+                        "No se encontro google_credentials.json y no hay variables de entorno configuradas. "
+                        "Por favor configura las variables de entorno GCP_* en Render."
+                    )
                 
                 credentials = Credentials.from_service_account_file(
                     credentials_file,
@@ -76,11 +90,13 @@ class GoogleSheetsHandler:
                 )
             
             self.client = gspread.authorize(credentials)
-            print("Autenticacion exitosa")
+            print("✅ Autenticacion exitosa con Google Sheets")
             
         except Exception as e:
-            st.error("Error de autenticacion: " + str(e))
-            print("ERROR de autenticacion:", str(e))
+            error_msg = "Error de autenticacion con Google Sheets: " + str(e)
+            print("❌", error_msg)
+            st.error(error_msg)
+            st.info("Verifica que las variables de entorno GCP_* esten configuradas correctamente en Render")
             raise
     
     def read_sheet_to_dataframe(self, sheet_id, sheet_name):
