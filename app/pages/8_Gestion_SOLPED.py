@@ -1,18 +1,19 @@
 """
-Gestion de Solicitudes de Pedido (SOLPED) Multi-Material
+Gestion de Solicitudes de Pedido (SOLPED)
 JAC Engineering SAS
+VERSION CON GOOGLE SHEETS - MULTI USUARIO
 """
 
 import streamlit as st
+import pandas as pd
 import sys
 import os
-import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.data_loader_sheets import DataLoaderSheets as DataLoader
-from src.inventory_analyzer import InventoryAnalyzer
+from src.google_sheets_handler import GoogleSheetsHandler
+from config.google_config import SHEETS_CONFIG
 
 st.set_page_config(
     page_title="Gestion SOLPED - JAC Engineering",
@@ -24,476 +25,503 @@ st.title("📋 Gestion de Solicitudes de Pedido (SOLPED)")
 st.markdown("JAC Engineering SAS - Control de compras con carrito multi-material")
 st.markdown("---")
 
-solped_file = 'config/solped_historico.xlsx'
+# ============================================================
+# FUNCIONES DE GOOGLE SHEETS
+# ============================================================
 
-if 'carrito_solped' not in st.session_state:
-    st.session_state.carrito_solped = []
+def get_handler():
+    return GoogleSheetsHandler()
 
-def load_solpeds():
+def load_solped_from_sheets():
+    """Carga historial de SOLPEDs desde Google Sheets"""
     try:
-        if not os.path.exists(solped_file):
-            return pd.DataFrame()
+        handler = get_handler()
+        config = SHEETS_CONFIG['solped']
         
-        df = pd.read_excel(solped_file)
+        df = handler.read_sheet_to_dataframe(
+            config['sheet_id'],
+            config['sheet_name']
+        )
         
-        if 'Fecha_Solicitud' in df.columns:
-            df['Fecha_Solicitud'] = pd.to_datetime(df['Fecha_Solicitud'], errors='coerce')
-        if 'Fecha_Estimada_Llegada' in df.columns:
-            df['Fecha_Estimada_Llegada'] = pd.to_datetime(df['Fecha_Estimada_Llegada'], errors='coerce')
-        if 'Fecha_Recepcion_Real' in df.columns:
-            df['Fecha_Recepcion_Real'] = pd.to_datetime(df['Fecha_Recepcion_Real'], errors='coerce')
+        if df.empty:
+            return pd.DataFrame(columns=[
+                'SOLPED_Numero', 'Fecha', 'Codigo', 'Descripcion',
+                'Nombre_Tecnico', 'Centro', 'Centro_Nombre',
+                'Cantidad_Solicitada', 'Unidad', 'Precio_Unitario',
+                'Valor_Total', 'Criticidad', 'Proveedor',
+                'Solicitado_Por', 'Estado', 'Notas'
+            ])
         
         return df
+        
     except Exception as e:
         st.error("Error cargando SOLPEDs: " + str(e))
         return pd.DataFrame()
 
-def save_solpeds(df):
+def save_solped_to_sheets(df):
+    """Guarda SOLPEDs en Google Sheets"""
     try:
-        df.to_excel(solped_file, index=False)
-        return True
+        handler = get_handler()
+        config = SHEETS_CONFIG['solped']
+        
+        # Limpiar datos antes de guardar
+        df_save = df.copy()
+        df_save = df_save.fillna('')
+        df_save = df_save.astype(str)
+        df_save = df_save.replace('nan', '')
+        
+        success = handler.write_dataframe_to_sheet(
+            df_save,
+            config['sheet_id'],
+            config['sheet_name']
+        )
+        
+        return success
+        
     except Exception as e:
-        st.error("Error guardando: " + str(e))
+        st.error("Error guardando SOLPEDs: " + str(e))
         return False
 
-def generar_numero_solped():
-    df = load_solpeds()
-    
-    if df.empty:
+def get_next_solped_number(df_solped):
+    """Genera el siguiente numero de SOLPED"""
+    if df_solped.empty or 'SOLPED_Numero' not in df_solped.columns:
         return "SOLPED-2026-001"
-    
-    numeros = df['SOLPED_Numero'].unique().tolist()
     
     try:
-        nums = [int(n.split('-')[-1]) for n in numeros if isinstance(n, str)]
-        ultimo = max(nums) if nums else 0
-        nuevo = ultimo + 1
-        return "SOLPED-2026-" + str(nuevo).zfill(3)
+        numeros = df_solped['SOLPED_Numero'].dropna().tolist()
+        if not numeros:
+            return "SOLPED-2026-001"
+        
+        # Extraer el numero secuencial del ultimo
+        ultimo = str(numeros[-1])
+        partes = ultimo.split('-')
+        if len(partes) == 3:
+            anio = datetime.now().year
+            num = int(partes[-1]) + 1
+            return "SOLPED-" + str(anio) + "-" + str(num).zfill(3)
+        else:
+            return "SOLPED-" + str(datetime.now().year) + "-" + str(len(numeros) + 1).zfill(3)
     except:
-        return "SOLPED-2026-001"
+        return "SOLPED-" + str(datetime.now().year) + "-001"
 
-def agregar_al_carrito(material, cantidad):
-    item = {
-        'codigo': str(material['codigo']),
-        'centro': str(material['centro']),
-        'descripcion': str(material['descripcion']),
-        'nombre_tecnico': str(material.get('nombre_tecnico', '')),
-        'categoria': str(material.get('Categoria', '')),
-        'stock_actual': int(material['stock_actual']),
-        'stock_minimo': int(material['stock_minimo']),
-        'cantidad': cantidad,
-        'proveedor': str(material.get('proveedor', 'POR CONFIGURAR'))
-    }
-    
-    existe = False
-    for i, item_carrito in enumerate(st.session_state.carrito_solped):
-        if item_carrito['codigo'] == item['codigo'] and item_carrito['centro'] == item['centro']:
-            st.session_state.carrito_solped[i]['cantidad'] = cantidad
-            existe = True
-            break
-    
-    if not existe:
-        st.session_state.carrito_solped.append(item)
-
-def eliminar_del_carrito(codigo, centro):
-    st.session_state.carrito_solped = [
-        item for item in st.session_state.carrito_solped 
-        if not (item['codigo'] == codigo and item['centro'] == centro)
-    ]
-
-@st.cache_data
 def load_inventory():
-    loader = DataLoader()
-    data = loader.merge_data()
-    if data.empty:
-        return None
-    analyzer = InventoryAnalyzer(data)
-    return analyzer.full_analysis()
+    """Carga inventario para seleccionar materiales"""
+    try:
+        from src.data_loader_sheets import DataLoaderSheets
+        loader = DataLoaderSheets()
+        df = loader.merge_data()
+        return df
+    except Exception as e:
+        st.error("Error cargando inventario: " + str(e))
+        return pd.DataFrame()
 
-if not os.path.exists(solped_file):
-    st.warning("⚠️ No existe el archivo de SOLPEDs")
-    st.info("Ejecuta el script para crear el sistema:")
-    st.code("python crear_solped_sistema.py", language="bash")
-    st.stop()
+# ============================================================
+# INICIALIZAR CARRITO EN SESSION STATE
+# ============================================================
 
-tab1, tab2, tab3, tab4 = st.tabs(["🛒 Crear SOLPED", "📑 SOLPEDs Activas", "📊 Historial", "📈 Estadísticas"])
+if 'carrito_solped' not in st.session_state:
+    st.session_state.carrito_solped = []
+
+if 'solicitado_por' not in st.session_state:
+    # Intentar obtener el nombre del usuario en sesión
+    if 'usuario_nombre' in st.session_state:
+        st.session_state.solicitado_por = st.session_state.usuario_nombre
+    else:
+        st.session_state.solicitado_por = ""
+
+# ============================================================
+# TABS PRINCIPALES
+# ============================================================
+
+tab1, tab2, tab3 = st.tabs([
+    "🛒 Nueva SOLPED",
+    "📊 Historial de SOLPEDs",
+    "📈 Resumen"
+])
+
+# ============================================================
+# TAB 1: NUEVA SOLPED
+# ============================================================
 
 with tab1:
-    st.subheader("🛒 Crear SOLPED Multi-Material")
+    st.markdown("### 🛒 Crear Nueva Solicitud de Pedido")
     
-    df_inventory = load_inventory()
+    # Datos del solicitante
+    col1, col2 = st.columns(2)
     
-    if df_inventory is None or df_inventory.empty:
-        st.error("No se pudo cargar el inventario")
-        st.stop()
+    with col1:
+        solicitado_por = st.text_input(
+            "Solicitado por",
+            value=st.session_state.solicitado_por,
+            placeholder="Nombre del solicitante"
+        )
+        st.session_state.solicitado_por = solicitado_por
     
-    df_criticos = df_inventory[df_inventory['estado'].isin(['CRITICO', 'BAJO'])].copy()
+    with col2:
+        notas_generales = st.text_area(
+            "Notas generales",
+            placeholder="Observaciones de la solicitud...",
+            height=80
+        )
     
-    df_solpeds_activas = load_solpeds()
-    if not df_solpeds_activas.empty:
-        solpeds_activas = df_solpeds_activas[
-            df_solpeds_activas['Estado'].isin(['PENDIENTE', 'APROBADA', 'EN_TRANSITO'])
-        ]
+    st.markdown("---")
+    
+    # Buscar materiales para agregar al carrito
+    st.markdown("### 🔍 Buscar y Agregar Materiales")
+    
+    col_busq1, col_busq2 = st.columns([4, 1])
+    
+    with col_busq1:
+        busqueda = st.text_input(
+            "Buscar material",
+            placeholder="Código, descripción o nombre técnico..."
+        )
+    
+    with col_busq2:
+        st.write("")
+        st.write("")
+        btn_buscar = st.button("🔍 Buscar", use_container_width=True)
+    
+    if busqueda:
+        with st.spinner("Buscando materiales..."):
+            df_inventario = load_inventory()
         
-        if not solpeds_activas.empty:
-            codigos_con_solped = solpeds_activas.groupby(['Codigo', 'Centro']).size().reset_index(name='tiene_solped')
+        if not df_inventario.empty:
+            termino = busqueda.lower().strip()
             
-            df_criticos = df_criticos.merge(
-                codigos_con_solped,
-                left_on=['codigo', 'centro'],
-                right_on=['Codigo', 'Centro'],
-                how='left'
+            mask = (
+                df_inventario['codigo'].astype(str).str.lower().str.contains(termino, na=False) |
+                df_inventario['descripcion'].astype(str).str.lower().str.contains(termino, na=False)
             )
             
-            df_criticos['tiene_solped'] = df_criticos['tiene_solped'].notna()
-    else:
-        df_criticos['tiene_solped'] = False
-    
-    sin_solped = df_criticos[df_criticos['tiene_solped'] == False]
-    con_solped = df_criticos[df_criticos['tiene_solped'] == True]
-    
-    col_info1, col_info2, col_info3 = st.columns(3)
-    
-    with col_info1:
-        st.metric("Materiales Críticos Total", len(df_criticos))
-    
-    with col_info2:
-        st.metric("Sin SOLPED", len(sin_solped))
-    
-    with col_info3:
-        st.metric("Con SOLPED Activa", len(con_solped))
+            if 'nombre_tecnico' in df_inventario.columns:
+                mask = mask | df_inventario['nombre_tecnico'].astype(str).str.lower().str.contains(termino, na=False)
+            
+            df_resultado = df_inventario[mask].copy()
+            
+            if df_resultado.empty:
+                st.warning("No se encontraron materiales con: " + busqueda)
+            else:
+                st.success("Encontrados: " + str(len(df_resultado)) + " materiales")
+                
+                # Mostrar resultados
+                for idx, row in df_resultado.head(10).iterrows():
+                    with st.expander(
+                        str(row['codigo']) + " - " + str(row['descripcion'])[:60] + " | Centro: " + str(row.get('centro', '')) + " | Stock: " + str(row.get('stock_actual', 0))
+                    ):
+                        col_info1, col_info2, col_info3 = st.columns(3)
+                        
+                        with col_info1:
+                            st.write("**Código:** " + str(row['codigo']))
+                            st.write("**Centro:** " + str(row.get('centro', 'N/A')))
+                            st.write("**Stock actual:** " + str(row.get('stock_actual', 0)))
+                        
+                        with col_info2:
+                            nombre_tec = str(row.get('nombre_tecnico', ''))
+                            if nombre_tec and nombre_tec != 'nan':
+                                st.write("**Nombre técnico:** " + nombre_tec)
+                            st.write("**Criticidad:** " + str(row.get('criticidad', 'N/A')))
+                            st.write("**Unidad:** " + str(row.get('unidad', 'UND')))
+                        
+                        with col_info3:
+                            precio = float(row.get('precio_unitario', 0)) if row.get('precio_unitario', 0) else 0
+                            st.write("**Precio unit.:** $" + "{:,.0f}".format(precio))
+                            st.write("**Proveedor:** " + str(row.get('proveedor', 'N/A')))
+                        
+                        # Cantidad a solicitar
+                        col_cant, col_btn = st.columns([2, 1])
+                        
+                        with col_cant:
+                            cantidad = st.number_input(
+                                "Cantidad a solicitar",
+                                min_value=1,
+                                value=1,
+                                step=1,
+                                key="cant_" + str(idx)
+                            )
+                        
+                        with col_btn:
+                            st.write("")
+                            st.write("")
+                            if st.button(
+                                "➕ Agregar al carrito",
+                                key="btn_" + str(idx),
+                                use_container_width=True
+                            ):
+                                # Verificar si ya está en el carrito
+                                ya_existe = False
+                                for item in st.session_state.carrito_solped:
+                                    if item['codigo'] == str(row['codigo']) and item['centro'] == str(row.get('centro', '')):
+                                        item['cantidad'] += cantidad
+                                        ya_existe = True
+                                        break
+                                
+                                if not ya_existe:
+                                    nombre_tecnico = str(row.get('nombre_tecnico', ''))
+                                    if nombre_tecnico == 'nan' or nombre_tecnico == 'None':
+                                        nombre_tecnico = ''
+                                    
+                                    st.session_state.carrito_solped.append({
+                                        'codigo': str(row['codigo']),
+                                        'descripcion': str(row['descripcion']),
+                                        'nombre_tecnico': nombre_tecnico,
+                                        'centro': str(row.get('centro', '')),
+                                        'centro_nombre': str(row.get('centro_nombre', '')),
+                                        'cantidad': cantidad,
+                                        'unidad': str(row.get('unidad', 'UND')),
+                                        'precio_unitario': float(row.get('precio_unitario', 0) or 0),
+                                        'criticidad': str(row.get('criticidad', 'C')),
+                                        'proveedor': str(row.get('proveedor', 'POR DEFINIR'))
+                                    })
+                                
+                                st.success("✅ Agregado al carrito")
+                                st.rerun()
     
     st.markdown("---")
-    
-    # BÚSQUEDA Y FILTROS MEJORADOS
-    col_search, col_f1, col_f2, col_f3 = st.columns([3, 2, 2, 1])
-    
-    with col_search:
-        busqueda = st.text_input(
-            "🔍 Buscar material",
-            placeholder="Codigo, nombre tecnico, descripcion...",
-            key="buscar_material",
-            help="Busca por codigo, nombre tecnico o cualquier palabra en la descripcion"
-        )
-    
-    with col_f1:
-        if 'centro' in sin_solped.columns:
-            centros = ['Todos'] + sorted(sin_solped['centro'].unique().tolist())
-            centro_filtro = st.selectbox("Centro:", centros, key="filtro_centro")
-        else:
-            centro_filtro = 'Todos'
-    
-    with col_f2:
-        if 'Categoria' in sin_solped.columns:
-            categorias = ['Todas'] + sorted(sin_solped['Categoria'].unique().tolist())
-            categoria_filtro = st.selectbox("Categoría:", categorias, key="filtro_cat")
-        else:
-            categoria_filtro = 'Todas'
-    
-    with col_f3:
-        st.write("")
-        st.write("")
-        if st.button("🗑️ Limpiar", use_container_width=True):
-            st.session_state.carrito_solped = []
-            st.rerun()
-    
-    # Aplicar filtros
-    df_mostrar = sin_solped.copy()
-    
-    # BÚSQUEDA FLEXIBLE
-    if busqueda:
-        busqueda_lower = busqueda.lower().strip()
-        
-        mask_busqueda = (
-            df_mostrar['codigo'].astype(str).str.lower().str.contains(busqueda_lower, na=False) |
-            df_mostrar['descripcion'].astype(str).str.lower().str.contains(busqueda_lower, na=False)
-        )
-        
-        if 'nombre_tecnico' in df_mostrar.columns:
-            mask_busqueda = mask_busqueda | df_mostrar['nombre_tecnico'].astype(str).str.lower().str.contains(busqueda_lower, na=False)
-        
-        if 'centro_nombre' in df_mostrar.columns:
-            mask_busqueda = mask_busqueda | df_mostrar['centro_nombre'].astype(str).str.lower().str.contains(busqueda_lower, na=False)
-        
-        df_mostrar = df_mostrar[mask_busqueda]
-        
-        if not df_mostrar.empty:
-            st.success("✅ Encontrados: " + str(len(df_mostrar)) + " materiales con '" + busqueda + "'")
-        else:
-            st.warning("⚠️ No se encontraron materiales con: " + busqueda)
-    
-    # CENTRO
-    if centro_filtro != 'Todos':
-        df_mostrar = df_mostrar[df_mostrar['centro'] == centro_filtro]
-    
-    # CATEGORÍA
-    if categoria_filtro != 'Todas':
-        df_mostrar = df_mostrar[df_mostrar['Categoria'] == categoria_filtro]
-    
-    st.markdown("---")
-    st.markdown("### 📦 Materiales Disponibles para Solicitud")
-    
-    if df_mostrar.empty:
-        st.info("No hay materiales con estos filtros")
-    else:
-        st.caption("Mostrando " + str(len(df_mostrar)) + " materiales")
-        
-        for idx in df_mostrar.index:
-            material = df_mostrar.loc[idx]
-            
-            col1, col2, col3, col4, col5, col6 = st.columns([1, 2, 2, 1, 1, 1])
-            
-            with col1:
-                st.write("**" + str(material['codigo']) + "**")
-            
-            with col2:
-                desc = str(material['descripcion'])[:40]
-                st.write(desc)
-                if material.get('nombre_tecnico', ''):
-                    st.caption("🏷️ " + str(material['nombre_tecnico']))
-            
-            with col3:
-                st.write(str(material['centro']) + " - " + str(material.get('centro_nombre', '')))
-                if material.get('Categoria', ''):
-                    st.caption("📂 " + str(material['Categoria']))
-            
-            with col4:
-                st.metric("Stock", int(material['stock_actual']))
-            
-            with col5:
-                cant_sugerida = int(material.get('cantidad_comprar', 0))
-                cantidad = st.number_input(
-                    "Cant",
-                    min_value=1,
-                    value=cant_sugerida,
-                    step=1,
-                    key="cant_" + str(idx),
-                    label_visibility="collapsed"
-                )
-            
-            with col6:
-                if st.button("➕", key="add_" + str(idx), use_container_width=True):
-                    agregar_al_carrito(material, cantidad)
-                    st.success("✅")
-                    st.rerun()
-            
-            st.markdown("---")
     
     # CARRITO
-    st.markdown("### 🛒 Carrito de SOLPED")
+    st.markdown("### 🛒 Carrito de Compras")
     
     if not st.session_state.carrito_solped:
-        st.info("El carrito está vacío. Agrega materiales desde la lista superior.")
+        st.info("El carrito está vacío. Busca y agrega materiales.")
     else:
-        st.success("📦 Materiales en el carrito: " + str(len(st.session_state.carrito_solped)))
+        st.success("**" + str(len(st.session_state.carrito_solped)) + " materiales en el carrito**")
+        
+        total_general = 0
+        items_a_eliminar = []
         
         for i, item in enumerate(st.session_state.carrito_solped):
-            col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 1, 1])
+            valor_total = item['cantidad'] * item['precio_unitario']
+            total_general += valor_total
             
-            with col1:
-                st.write("**" + item['codigo'] + "** [" + item['centro'] + "]")
-            
-            with col2:
-                st.write(item['descripcion'][:40])
-                if item['nombre_tecnico']:
-                    st.caption("🏷️ " + item['nombre_tecnico'])
-            
-            with col3:
-                st.write("Proveedor: " + item['proveedor'])
-            
-            with col4:
-                st.metric("Cantidad", item['cantidad'])
-            
-            with col5:
-                if st.button("🗑️", key="del_" + str(i), use_container_width=True):
-                    eliminar_del_carrito(item['codigo'], item['centro'])
-                    st.rerun()
+            with st.container():
+                col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 2, 1])
+                
+                with col1:
+                    desc_display = item['nombre_tecnico'] if item['nombre_tecnico'] else item['descripcion']
+                    st.write("**" + item['codigo'] + "** - " + desc_display[:50])
+                    st.caption("Centro: " + item['centro'] + " | " + item['centro_nombre'][:30])
+                
+                with col2:
+                    nueva_cantidad = st.number_input(
+                        "Cant.",
+                        min_value=1,
+                        value=item['cantidad'],
+                        step=1,
+                        key="carrito_cant_" + str(i)
+                    )
+                    st.session_state.carrito_solped[i]['cantidad'] = nueva_cantidad
+                
+                with col3:
+                    st.write("**Unid:**")
+                    st.write(item['unidad'])
+                
+                with col4:
+                    st.write("**Valor:**")
+                    valor = nueva_cantidad * item['precio_unitario']
+                    st.write("$" + "{:,.0f}".format(valor))
+                
+                with col5:
+                    if st.button("🗑️", key="del_" + str(i), help="Eliminar del carrito"):
+                        items_a_eliminar.append(i)
+                
+                st.markdown("---")
+        
+        # Eliminar items marcados
+        if items_a_eliminar:
+            for i in sorted(items_a_eliminar, reverse=True):
+                st.session_state.carrito_solped.pop(i)
+            st.rerun()
+        
+        # Total
+        st.markdown("### 💰 Total: **$" + "{:,.0f}".format(total_general) + " COP**")
         
         st.markdown("---")
         
-        st.markdown("### 📝 Detalles de la Solicitud")
+        # Botones de acción
+        col_acc1, col_acc2, col_acc3 = st.columns(3)
         
-        col1, col2, col3 = st.columns(3)
+        with col_acc1:
+            if st.button("🗑️ Limpiar carrito", use_container_width=True):
+                st.session_state.carrito_solped = []
+                st.rerun()
         
-        with col1:
-            numero_solped = generar_numero_solped()
-            st.text_input("Numero SOLPED", value=numero_solped, disabled=True)
+        with col_acc2:
+            # Descargar como Excel
+            df_carrito = pd.DataFrame(st.session_state.carrito_solped)
+            csv = df_carrito.to_csv(index=False).encode('utf-8')
             
-            solicitante = st.text_input("Solicitante", value="Jaime Córdoba")
+            st.download_button(
+                label="📥 Descargar lista",
+                data=csv,
+                file_name="solped_" + datetime.now().strftime('%Y%m%d_%H%M') + ".csv",
+                mime="text/csv",
+                use_container_width=True
+            )
         
-        with col2:
-            fecha_solicitud = st.date_input("Fecha Solicitud", value=datetime.now())
-            
-            lead_time_general = st.number_input("Lead Time (dias)", min_value=1, value=30, step=1)
-            
-            fecha_estimada = fecha_solicitud + timedelta(days=lead_time_general)
-            st.info("Fecha Estimada: " + fecha_estimada.strftime('%Y-%m-%d'))
-        
-        with col3:
-            estado_inicial = st.selectbox("Estado Inicial", ['PENDIENTE', 'APROBADA'])
-            
-            precio_global = st.number_input("Precio Unitario Global (opcional)", min_value=0.0, value=0.0, step=1000.0)
-        
-        notas_general = st.text_area("Notas Generales", height=100)
-        
-        st.markdown("---")
-        
-        col_btn1, col_btn2 = st.columns(2)
-        
-        with col_btn1:
-            if st.button("✅ CREAR SOLPED COMPLETA", type="primary", use_container_width=True):
-                
-                nuevos_registros = []
-                
-                for item in st.session_state.carrito_solped:
-                    registro = {
-                        'SOLPED_Numero': numero_solped,
-                        'Codigo': item['codigo'],
-                        'Centro': item['centro'],
-                        'Descripcion': item['descripcion'],
-                        'Nombre_Tecnico': item['nombre_tecnico'],
-                        'Categoria': item['categoria'],
-                        'Cantidad_Solicitada': item['cantidad'],
-                        'Fecha_Solicitud': fecha_solicitud,
-                        'Estado': estado_inicial,
-                        'Fecha_Estimada_Llegada': fecha_estimada,
-                        'Fecha_Recepcion_Real': None,
-                        'Proveedor': item['proveedor'],
-                        'Precio_Unitario': precio_global,
-                        'Valor_Total': precio_global * item['cantidad'],
-                        'Solicitante': solicitante,
-                        'Notas': notas_general
-                    }
-                    
-                    nuevos_registros.append(registro)
-                
-                df_solpeds = load_solpeds()
-                df_nuevos = pd.DataFrame(nuevos_registros)
-                df_solpeds = pd.concat([df_solpeds, df_nuevos], ignore_index=True)
-                
-                if save_solpeds(df_solpeds):
-                    st.success("✅ SOLPED " + numero_solped + " creada con " + str(len(nuevos_registros)) + " materiales")
-                    st.balloons()
-                    
-                    st.session_state.carrito_solped = []
-                    
-                    import time
-                    time.sleep(2)
-                    st.rerun()
-        
-        with col_btn2:
-            st.caption("Total materiales: " + str(len(st.session_state.carrito_solped)))
+        with col_acc3:
+            if st.button(
+                "✅ GENERAR SOLPED",
+                use_container_width=True,
+                type="primary"
+            ):
+                if not solicitado_por:
+                    st.error("❌ Ingresa el nombre del solicitante")
+                else:
+                    with st.spinner("Generando SOLPED en Google Sheets..."):
+                        # Cargar historial actual
+                        df_solped = load_solped_from_sheets()
+                        
+                        # Generar numero de SOLPED
+                        numero_solped = get_next_solped_number(df_solped)
+                        fecha_actual = datetime.now().strftime('%Y-%m-%d %H:%M')
+                        
+                        # Crear filas para cada item
+                        nuevas_filas = []
+                        for item in st.session_state.carrito_solped:
+                            valor_total = item['cantidad'] * item['precio_unitario']
+                            
+                            nuevas_filas.append({
+                                'SOLPED_Numero': numero_solped,
+                                'Fecha': fecha_actual,
+                                'Codigo': item['codigo'],
+                                'Descripcion': item['descripcion'],
+                                'Nombre_Tecnico': item['nombre_tecnico'],
+                                'Centro': item['centro'],
+                                'Centro_Nombre': item['centro_nombre'],
+                                'Cantidad_Solicitada': item['cantidad'],
+                                'Unidad': item['unidad'],
+                                'Precio_Unitario': item['precio_unitario'],
+                                'Valor_Total': valor_total,
+                                'Criticidad': item['criticidad'],
+                                'Proveedor': item['proveedor'],
+                                'Solicitado_Por': solicitado_por,
+                                'Estado': 'PENDIENTE',
+                                'Notas': notas_generales
+                            })
+                        
+                        df_nuevas = pd.DataFrame(nuevas_filas)
+                        
+                        # Agregar al historial
+                        if df_solped.empty:
+                            df_actualizado = df_nuevas
+                        else:
+                            df_actualizado = pd.concat([df_solped, df_nuevas], ignore_index=True)
+                        
+                        # Guardar en Google Sheets
+                        success = save_solped_to_sheets(df_actualizado)
+                        
+                        if success:
+                            st.success("✅ SOLPED **" + numero_solped + "** generada exitosamente")
+                            st.info("📊 " + str(len(nuevas_filas)) + " materiales | Total: $" + "{:,.0f}".format(sum([i['cantidad'] * i['precio_unitario'] for i in st.session_state.carrito_solped])))
+                            st.balloons()
+                            
+                            # Limpiar carrito
+                            st.session_state.carrito_solped = []
+                            st.rerun()
+                        else:
+                            st.error("❌ Error generando SOLPED")
+
+# ============================================================
+# TAB 2: HISTORIAL
+# ============================================================
 
 with tab2:
-    st.subheader("📑 SOLPEDs Activas")
+    st.markdown("### 📊 Historial de SOLPEDs")
     
-    df_solpeds = load_solpeds()
+    with st.spinner("Cargando historial..."):
+        df_historial = load_solped_from_sheets()
     
-    if df_solpeds.empty:
-        st.info("No hay SOLPEDs registradas")
+    if df_historial.empty:
+        st.info("No hay SOLPEDs registradas aún. Crea tu primera SOLPED en la pestaña 'Nueva SOLPED'.")
     else:
-        df_activas = df_solpeds[df_solpeds['Estado'].isin(['PENDIENTE', 'APROBADA', 'EN_TRANSITO'])].copy()
+        # Filtros
+        col_f1, col_f2, col_f3 = st.columns(3)
         
-        if df_activas.empty:
-            st.success("✅ No hay SOLPEDs activas")
-        else:
-            solpeds_unicas = df_activas['SOLPED_Numero'].unique()
-            
-            st.info("SOLPEDs activas: " + str(len(solpeds_unicas)))
-            
-            for solped_num in solpeds_unicas:
-                materiales_solped = df_activas[df_activas['SOLPED_Numero'] == solped_num]
-                
-                with st.expander(solped_num + " (" + str(len(materiales_solped)) + " materiales) - Estado: " + materiales_solped.iloc[0]['Estado']):
-                    
-                    st.write("**Fecha Solicitud:** " + str(materiales_solped.iloc[0]['Fecha_Solicitud']))
-                    st.write("**Solicitante:** " + str(materiales_solped.iloc[0].get('Solicitante', 'N/A')))
-                    st.write("**Fecha Estimada:** " + str(materiales_solped.iloc[0]['Fecha_Estimada_Llegada']))
-                    
-                    st.markdown("---")
-                    
-                    st.dataframe(
-                        materiales_solped[['Codigo', 'Centro', 'Descripcion', 'Cantidad_Solicitada', 'Proveedor']],
-                        use_container_width=True
-                    )
-                    
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        nuevo_estado = st.selectbox(
-                            "Cambiar Estado:",
-                            ['PENDIENTE', 'APROBADA', 'EN_TRANSITO', 'RECIBIDA', 'CANCELADA'],
-                            key="estado_" + solped_num
-                        )
-                    
-                    with col2:
-                        if nuevo_estado == 'RECIBIDA':
-                            fecha_rec = st.date_input("Fecha Recepción", value=datetime.now(), key="fecha_" + solped_num)
-                        else:
-                            fecha_rec = None
-                    
-                    with col3:
-                        st.write("")
-                        if st.button("💾 Actualizar", key="update_" + solped_num):
-                            df_solpeds.loc[df_solpeds['SOLPED_Numero'] == solped_num, 'Estado'] = nuevo_estado
-                            
-                            if fecha_rec and nuevo_estado == 'RECIBIDA':
-                                df_solpeds.loc[df_solpeds['SOLPED_Numero'] == solped_num, 'Fecha_Recepcion_Real'] = fecha_rec
-                            
-                            if save_solpeds(df_solpeds):
-                                st.success("✅ Actualizado")
-                                st.rerun()
+        with col_f1:
+            if 'SOLPED_Numero' in df_historial.columns:
+                solpeds_disponibles = ['Todas'] + sorted(df_historial['SOLPED_Numero'].unique().tolist())
+                filtro_numero = st.selectbox("Filtrar por SOLPED", solpeds_disponibles)
+        
+        with col_f2:
+            if 'Estado' in df_historial.columns:
+                estados_disponibles = ['Todos'] + sorted(df_historial['Estado'].unique().tolist())
+                filtro_estado = st.selectbox("Filtrar por Estado", estados_disponibles)
+        
+        with col_f3:
+            if 'Centro' in df_historial.columns:
+                centros_disponibles = ['Todos'] + sorted(df_historial['Centro'].unique().tolist())
+                filtro_centro = st.selectbox("Filtrar por Centro", centros_disponibles)
+        
+        # Aplicar filtros
+        df_filtrado = df_historial.copy()
+        
+        if filtro_numero != 'Todas' and 'SOLPED_Numero' in df_filtrado.columns:
+            df_filtrado = df_filtrado[df_filtrado['SOLPED_Numero'] == filtro_numero]
+        
+        if filtro_estado != 'Todos' and 'Estado' in df_filtrado.columns:
+            df_filtrado = df_filtrado[df_filtrado['Estado'] == filtro_estado]
+        
+        if filtro_centro != 'Todos' and 'Centro' in df_filtrado.columns:
+            df_filtrado = df_filtrado[df_filtrado['Centro'] == filtro_centro]
+        
+        st.info("Mostrando " + str(len(df_filtrado)) + " de " + str(len(df_historial)) + " registros")
+        
+        st.dataframe(df_filtrado, use_container_width=True, height=400)
+        
+        # Descargar historial
+        csv_historial = df_filtrado.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Descargar historial",
+            data=csv_historial,
+            file_name="historial_solped_" + datetime.now().strftime('%Y%m%d') + ".csv",
+            mime="text/csv"
+        )
+
+# ============================================================
+# TAB 3: RESUMEN
+# ============================================================
 
 with tab3:
-    st.subheader("📊 Historial Completo")
+    st.markdown("### 📈 Resumen de SOLPEDs")
     
-    df_solpeds = load_solpeds()
+    with st.spinner("Calculando resumen..."):
+        df_resumen = load_solped_from_sheets()
     
-    if not df_solpeds.empty:
-        st.metric("Total Registros", len(df_solpeds))
+    if df_resumen.empty:
+        st.info("No hay datos suficientes para mostrar el resumen.")
+    else:
+        # Métricas generales
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         
-        st.dataframe(
-            df_solpeds.sort_values('Fecha_Solicitud', ascending=False),
-            use_container_width=True,
-            height=500
-        )
+        total_solpeds = df_resumen['SOLPED_Numero'].nunique() if 'SOLPED_Numero' in df_resumen.columns else 0
+        total_items = len(df_resumen)
         
-        csv = df_solpeds.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "📥 Descargar",
-            csv,
-            "historial_solped.csv",
-            "text/csv"
-        )
-
-with tab4:
-    st.subheader("📈 Estadísticas")
-    
-    df_solpeds = load_solpeds()
-    
-    if not df_solpeds.empty:
-        col1, col2, col3, col4 = st.columns(4)
+        if 'Valor_Total' in df_resumen.columns:
+            df_resumen['Valor_Total'] = pd.to_numeric(df_resumen['Valor_Total'], errors='coerce').fillna(0)
+            valor_total = df_resumen['Valor_Total'].sum()
+        else:
+            valor_total = 0
         
-        with col1:
-            st.metric("Total Materiales", len(df_solpeds))
+        pendientes = len(df_resumen[df_resumen.get('Estado', '') == 'PENDIENTE']) if 'Estado' in df_resumen.columns else 0
         
-        with col2:
-            solpeds_unicas = df_solpeds['SOLPED_Numero'].nunique()
-            st.metric("SOLPEDs Únicas", solpeds_unicas)
+        with col_m1:
+            st.metric("Total SOLPEDs", total_solpeds)
         
-        with col3:
-            pendientes = len(df_solpeds[df_solpeds['Estado'] == 'PENDIENTE'])
+        with col_m2:
+            st.metric("Total Items", total_items)
+        
+        with col_m3:
+            st.metric("Valor Total", "$" + "{:,.0f}".format(valor_total))
+        
+        with col_m4:
             st.metric("Pendientes", pendientes)
-        
-        with col4:
-            if 'Valor_Total' in df_solpeds.columns:
-                valor = df_solpeds['Valor_Total'].sum()
-                st.metric("Valor Total", "${:,.0f}".format(valor))
 
+# Footer
 st.markdown("---")
-
 st.markdown("""
-<div style="background: linear-gradient(135deg, #134B70 0%, #1B8E9E 100%); color: white; padding: 1.5rem; border-radius: 10px; text-align: center; margin-top: 2rem;">
+<div style="background: linear-gradient(135deg, #134B70 0%, #1B8E9E 100%); 
+     color: white; padding: 1.5rem; border-radius: 10px; text-align: center;">
     <strong>JAC Engineering SAS</strong> - Electrical Systems & Data Intelligence<br>
     proyectos@jacengineering.com.co | https://jacengineering.com.co | +57 322 701 8502
 </div>
