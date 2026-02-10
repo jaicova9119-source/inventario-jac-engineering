@@ -131,7 +131,7 @@ class DataLoaderSheets:
                 'Consumo_Prom_Mensual': 'consumo_mensual',
                 'Proveedor': 'proveedor',
                 'Categoria': 'Categoria',
-                'observaciones': 'Observaciones'
+                'Observaciones': 'observaciones'
             }
             
             df.rename(columns=column_mapping, inplace=True)
@@ -180,7 +180,8 @@ class DataLoaderSheets:
                 'criticidad': 'Criticidad',
                 'consumo_mensual': 'Consumo_Prom_Mensual',
                 'proveedor': 'Proveedor',
-                'Categoria': 'Categoria'
+                'Categoria': 'Categoria',
+                'observaciones': 'Observaciones'
             }
             
             df_save = df.copy()
