@@ -130,7 +130,7 @@ class DataLoaderSheets:
                 'Criticidad': 'criticidad',
                 'Consumo_Prom_Mensual': 'consumo_mensual',
                 'Proveedor': 'proveedor',
-                'Categoria': 'Categoria'
+                'Categoria': 'Categoria',
                 'observaciones': 'Observaciones'
             }
             
