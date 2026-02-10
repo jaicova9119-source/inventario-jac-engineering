@@ -131,6 +131,7 @@ class DataLoaderSheets:
                 'Consumo_Prom_Mensual': 'consumo_mensual',
                 'Proveedor': 'proveedor',
                 'Categoria': 'Categoria'
+                'observaciones': 'Observaciones'
             }
             
             df.rename(columns=column_mapping, inplace=True)
